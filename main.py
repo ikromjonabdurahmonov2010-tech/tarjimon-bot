@@ -1,120 +1,95 @@
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
 import asyncio
-import logging
-import os
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from googletrans import Translator
-from gtts import gTTS
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-TOKEN = "7355562290:AAETdSAKBnT2DuiswTDH9tkgDNrSayrf86Q"
 
+bot = Bot(token="8344603285:AAEmV_4Bm7UoYCfcvlWTvAhVUlxXgoYdQ7s")
 dp = Dispatcher()
-translator = Translator()
+
+MOVIES = {}
+movie_id = 1
+ADMIN_ID = 8010711230
+
+@dp.message(Command('start'))
+async def start(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        keyboards = ReplyKeyboardMarkup(keyboard=[
+            [
+                KeyboardButton(text='Kino qoshish ➕'),
+                KeyboardButton(text='Kino qidirish 🔎')
+            ]
+        ],
+            resize_keyboard=True,
+            input_field_placeholder="Menyudan tanlang..."
+        )
+        await message.answer(
+            f"Assalomu alaykum {message.from_user.first_name}\n\n"
+            "🎥 Kino botga xush kelibsiz!\n", reply_markup=keyboards)
+    else:
+        keyboards = ReplyKeyboardMarkup(keyboard=[
+            [
+                KeyboardButton(text='Kino qidirish 🔎')
+            ]
+        ],
+            resize_keyboard=True,
+            input_field_placeholder="Menyudan tanlang..."
+        )
+        await message.answer(
+            f"Assalomu alaykum {message.from_user.first_name}\n\n"
+            "🎥 Kino botga xush kelibsiz!\n", reply_markup=keyboards)
 
 
-class TranslateState(StatesGroup):
-    choosing_direction = State()
-    translating = State()
 
 
-# Tillar ro'yxati
-LANGS = [
-    ("🇬🇧", "Ingliz", "en"),
-    ("🇷🇺", "Rus", "ru"),
-    ("🇹🇷", "Turk", "tr"),
-    ("🇩🇪", "Nemis", "de"),
-    ("🇫🇷", "Fransuz", "fr"),
-    ("🇰🇷", "Koreys", "ko"),
-    ("🇨🇳", "Xitoy", "zh-cn"),
-    ("🇦🇪", "Arab", "ar"),
-    ("🇪🇸", "Ispan", "es"),
-    ("🇯🇵", "Yapon", "ja")
-]
+@dp.message(F.text == "Kino qoshish ➕")
+async def msg_video(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer('Iltimos kinoni yuboring ...')
+    else:
+        await message.answer('Bunday buyruq mavjud emas ...')
 
 
-# Pastda turadigan "Menuga qaytish" tugmasi
-def get_main_menu():
-    builder = ReplyKeyboardBuilder()
-    builder.button(text="🔝 Menuga qaytish")
-    return builder.as_markup(resize_keyboard=True)
+@dp.message(F.video)
+async def add_video(message: types.Message):
+    global movie_id
+    if message.video:
+        if message.from_user.id == ADMIN_ID:
+            MOVIES[movie_id] = {
+                'title': f'Kino #{movie_id}',
+                'film_id': message.video.file_id
+            }
+            movie_id += 1
+            await message.answer('Kino botga qoshildi !!!')
+        else:
+            await message.answer('Sizga ruxsat yoq !!!')
+    else:
+        await message.answer('Iltimos faqat video yuboring !!!')
+
+@dp.message(F.text == "Kino qidirish 🔎")
+async def search_video(message: types.Message):
+    await message.answer('Kino raqamini kiriting ...')
+
+@dp.message(F.text)
+async def get_video(message: types.Message):
+    global movie_id
+    if message.text:
+        if not message.text.isdigit():
+            await message.answer('Iltimos faqat raqam kiriting !!!')
+        raqam = int(message.text)
+        movie = MOVIES.get(raqam)
+        if movie:
+            await message.answer_video(
+                video=movie["film_id"],
+                caption=f"🎬 {movie['title']}"
+            )
+        else:
+            await message.answer('Bunday raqamli kino topilmadi 🔎')
 
 
-# Inline til tanlash menyusi
-def get_lang_keyboard():
-    builder = InlineKeyboardBuilder()
-    for flag, name, code in LANGS:
-        builder.button(text=f"{flag}{name} - Uzb", callback_data=f"dir_{code}_uz")
-        builder.button(text=f"Uzb - {flag}{name}", callback_data=f"dir_uz_{code}")
-    builder.adjust(2)
-    return builder.as_markup()
-
-
-@dp.message(CommandStart())
-@dp.message(F.text == "🔝 Menuga qaytish")  # Har qanday holatda menyuga qaytaradi
-async def start(message: types.Message, state: FSMContext):
-    await state.clear()
-    await state.set_state(TranslateState.choosing_direction)
-    await message.answer(
-        "Assalomu alaykum! Yo'nalishni tanlang:",
-        reply_markup=get_main_menu()  # Pastdagi tugmani chiqaradi
-    )
-    await message.answer(
-        "Tillar ro'yxati:",
-        reply_markup=get_lang_keyboard()
-    )
-
-
-@dp.callback_query(F.data.startswith("dir_"))
-async def set_direction(callback: types.CallbackQuery, state: FSMContext):
-    _, src, dest = callback.data.split("_")
-    await state.update_data(src=src, dest=dest)
-    await state.set_state(TranslateState.translating)
-    await callback.message.edit_text(
-        f"✅ <b>{src.upper()} - {dest.upper()}</b> tanlandi.\nMatn yuboring:",
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@dp.message(TranslateState.translating)
-async def translate_text(message: types.Message, state: FSMContext):
-    if not message.text or message.text == "🔝 Menuga qaytish":
-        return
-
-    data = await state.get_data()
-    src_l = data.get('src')
-    dest_l = data.get('dest')
-
-    try:
-        # 1. Matnni tarjima qilish
-        res = translator.translate(message.text, src=src_l, dest=dest_l)
-        await message.reply(f"<b>Natija:</b>\n\n{res.text}", parse_mode="HTML")
-
-        # 2. Ovozli fayl yaratish
-        tts = gTTS(text=res.text, lang=dest_l)
-        file_name = f"voice_{message.from_user.id}.mp3"
-        tts.save(file_name)
-
-        # 3. Ovozni yuborish
-        voice_file = types.FSInputFile(file_name)
-        await message.answer_voice(voice=voice_file)
-
-        # 4. Faylni o'chirish
-        os.remove(file_name)
-
-    except Exception as e:
-        logging.error(f"Xatolik: {e}")
-        await message.answer("Xatolik! Qayta urinib ko'ring.")
-
-
-async def main():
-    bot = Bot(token=TOKEN)
+async def start_bot():
+    print('Bot starting...')
     await dp.start_polling(bot)
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+asyncio.run(start_bot())
